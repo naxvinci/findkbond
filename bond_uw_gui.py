@@ -11,9 +11,241 @@ import tkinter as tk
 import webbrowser
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from tkinter import font as tkfont
 from tkinter import messagebox, simpledialog, ttk
 
 import bond_uw as b
+
+
+# ---------------------------------------------------------------- 화면 꾸미기 (아이콘 색에 맞춘 청록 + 노랑)
+BG = "#f4f8f9"
+TEAL = "#1296a8"
+TEAL_DARK = "#0b6e7f"
+YELLOW = "#ffc43d"
+FONT = "Malgun Gothic"
+
+
+def apply_theme(root):
+    """전체 위젯의 색/글꼴/여백을 한 번에 정한다. 실패해도 기본 모양으로 동작한다."""
+    try:
+        st = ttk.Style(root)
+        try:
+            st.theme_use("clam")
+        except Exception:
+            pass
+        root.configure(background=BG)
+        for pat, val in (("*Text.relief", "flat"), ("*Text.highlightThickness", 1), ("*Text.highlightBackground", "#c5d3d8"),
+                         ("*Text.highlightColor", TEAL), ("*Text.padX", 8), ("*Text.padY", 6),
+                         ("*Text.font", f"{{{FONT}}} 10"), ("*Listbox.relief", "flat"), ("*Listbox.highlightThickness", 1),
+                         ("*Listbox.highlightBackground", "#c5d3d8"), ("*Listbox.font", f"{{{FONT}}} 10"),
+                         ("*Listbox.selectBackground", "#bfe6ec"), ("*Listbox.selectForeground", "#0b3c46")):
+            root.option_add(pat, val)
+        st.configure(".", font=(FONT, 10), background=BG, foreground="#25323a")
+        st.configure("TFrame", background=BG)
+        st.configure("TLabel", background=BG)
+        st.configure("TCheckbutton", background=BG)
+        st.map("TCheckbutton", background=[("active", BG)])
+        st.configure("TEntry", padding=5, fieldbackground="white", bordercolor="#c5d3d8", lightcolor="#c5d3d8")
+        st.map("TEntry", bordercolor=[("focus", TEAL)], lightcolor=[("focus", TEAL)])
+        st.configure("TButton", padding=(12, 6), background="white", bordercolor="#c5d3d8",
+                     lightcolor="white", darkcolor="white", focuscolor=BG)
+        st.map("TButton", background=[("active", "#e6f4f6"), ("disabled", "#eef1f2")],
+               foreground=[("disabled", "#a5b0b5")])
+        st.configure("Accent.TButton", padding=(14, 6), background=TEAL, foreground="white",
+                     bordercolor=TEAL_DARK, lightcolor=TEAL, darkcolor=TEAL, focuscolor=TEAL,
+                     font=(FONT, 10, "bold"))
+        st.map("Accent.TButton", background=[("active", TEAL_DARK), ("disabled", "#9fc9d0")],
+               foreground=[("disabled", "#eef6f8")])
+        st.configure("TNotebook", background=BG, borderwidth=0, tabmargins=0, bordercolor=BG, lightcolor=BG, darkcolor=BG)
+        st.layout("TNotebook.Tab", [])  # 기본 탭은 숨기고 둥근 탭 줄(PillTabs)을 대신 쓴다
+        st.configure("Treeview", rowheight=26, background="white", fieldbackground="white",
+                     bordercolor="#d5e0e4", font=(FONT, 10))
+        st.map("Treeview", background=[("selected", "#bfe6ec")], foreground=[("selected", "#0b3c46")])
+        st.configure("Treeview.Heading", background=TEAL_DARK, foreground="white", padding=(6, 7),
+                     font=(FONT, 10, "bold"), relief="flat")
+        st.map("Treeview.Heading", background=[("active", TEAL)])
+        st.configure("Horizontal.TProgressbar", troughcolor="#dcebee", background=YELLOW,
+                     bordercolor="#dcebee", lightcolor=YELLOW, darkcolor=YELLOW, thickness=8)
+    except Exception:
+        pass
+
+
+
+def round_rect(cv, x1, y1, x2, y2, r, **kw):
+    """모서리가 둥근 사각형 (캔버스 위에 부드러운 다각형으로 그린다)"""
+    r = max(0, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
+    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
+           x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return cv.create_polygon(pts, smooth=True, **kw)
+
+
+class RoundButton(tk.Canvas):
+    """알약 모양 버튼. ttk.Button 처럼 command, state=, .state([...]) 를 쓸 수 있다."""
+
+    COLORS = {  # (바탕, 테두리, 글자)
+        "normal": ("white", "#c5d3d8", "#25323a"),
+        "hover": ("#e6f4f6", TEAL, "#25323a"),
+        "press": ("#cfe9ed", TEAL, "#25323a"),
+        "disabled": ("#eef1f2", "#e1e7e9", "#a5b0b5"),
+        "a_normal": (TEAL, TEAL, "white"),
+        "a_hover": (TEAL_DARK, TEAL_DARK, "white"),
+        "a_press": ("#095663", "#095663", "white"),
+        "a_disabled": ("#a9d3d9", "#a9d3d9", "#f2f9fa"),
+    }
+
+    def __init__(self, parent, text="", command=None, state="normal", style="", height=36, padx=20, **_):
+        self.accent = "Accent" in (style or "")
+        self._font = tkfont.Font(family=FONT, size=10, weight="bold" if self.accent else "normal")
+        self._text, self._cmd = text, command
+        self._disabled = (str(state) == "disabled")
+        self._hover = self._down = False
+        w = self._font.measure(text) + 2 * padx
+        super().__init__(parent, width=w, height=height, highlightthickness=0, bd=0, background=BG)
+        self.bind("<Enter>", lambda e: self._set(hover=True))
+        self.bind("<Leave>", lambda e: self._set(hover=False, down=False))
+        self.bind("<ButtonPress-1>", lambda e: self._set(down=True))
+        self.bind("<ButtonRelease-1>", self._release)
+        self.bind("<Configure>", lambda e: self._draw())
+        self._draw()
+
+    def _set(self, hover=None, down=None):
+        if hover is not None:
+            self._hover = hover
+        if down is not None:
+            self._down = down
+        self._draw()
+
+    def _release(self, e):
+        was = self._down
+        self._set(down=False)
+        inside = 0 <= e.x <= self.winfo_width() and 0 <= e.y <= self.winfo_height()
+        if was and inside and not self._disabled and self._cmd:
+            self._cmd()
+
+    def _draw(self):
+        self.delete("all")
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 4:  # 아직 화면에 배치 전
+            w, h = int(self["width"]), int(self["height"])
+        key = "disabled" if self._disabled else ("press" if self._down else ("hover" if self._hover else "normal"))
+        fill, line, fg = self.COLORS[("a_" if self.accent else "") + key]
+        round_rect(self, 1, 1, w - 1, h - 1, (h - 2) / 2, fill=fill, outline=line, width=1)
+        self.create_text(w / 2, h / 2, text=self._text, fill=fg, font=self._font)
+        self.configure(cursor="arrow" if self._disabled else "hand2")
+
+    def state(self, spec=None):
+        """ttk 방식: state(["disabled"]) / state(["!disabled"])"""
+        for sp in (spec or []):
+            if sp == "disabled":
+                self._disabled = True
+            elif sp == "!disabled":
+                self._disabled = False
+        self._draw()
+
+
+class RoundEntry(tk.Canvas):
+    """둥근 입력칸. ttk.Entry 처럼 textvariable, width(글자 수), bind, focus_set 을 쓸 수 있다."""
+
+    def __init__(self, parent, textvariable=None, width=20, height=36, **_):
+        self._font = tkfont.Font(family=FONT, size=10)
+        self._focus = False
+        w = self._font.measure("0") * width + 32
+        super().__init__(parent, width=w, height=height, highlightthickness=0, bd=0, background=BG)
+        self.entry = tk.Entry(self, textvariable=textvariable, relief="flat", bd=0, highlightthickness=0,
+                              font=self._font, background="white", foreground="#25323a",
+                              insertbackground=TEAL_DARK, selectbackground="#bfe6ec", selectforeground="#0b3c46")
+        self._win = self.create_window(16, height // 2, window=self.entry, anchor="w", width=w - 32)
+        self.entry.bind("<FocusIn>", lambda e: self._set_focus(True))
+        self.entry.bind("<FocusOut>", lambda e: self._set_focus(False))
+        self.bind("<Button-1>", lambda e: self.entry.focus_set())
+        self.bind("<Configure>", self._on_size)
+        self._draw(w, height)
+
+    def _on_size(self, e):
+        self.itemconfigure(self._win, width=max(10, e.width - 32))
+        self.coords(self._win, 16, e.height // 2)
+        self._draw(e.width, e.height)
+
+    def _set_focus(self, f):
+        self._focus = f
+        self._draw(self.winfo_width(), self.winfo_height())
+
+    def _draw(self, w, h):
+        self.delete("bg")
+        if w < 4:
+            w, h = int(self["width"]), int(self["height"])
+        round_rect(self, 1, 1, w - 1, h - 1, (h - 2) / 2, fill="white", width=2 if self._focus else 1,
+                   outline=TEAL if self._focus else "#c5d3d8", tags="bg")
+        self.tag_lower("bg")
+
+    # --- 안쪽 입력칸으로 위임
+    def bind(self, sequence=None, func=None, add=None):
+        if sequence and sequence.startswith("<Return") or sequence in ("<KeyRelease>", "<Key>"):
+            return self.entry.bind(sequence, func, add)
+        return super().bind(sequence, func, add)
+
+    def focus_set(self):
+        self.entry.focus_set()
+
+    def get(self):
+        return self.entry.get()
+
+    def insert(self, i, s):
+        self.entry.insert(i, s)
+
+    def delete(self, *a):
+        if a and a[0] == "all" or (a and isinstance(a[0], str) and not a[0].isdigit() and a[0] != "end"):
+            return super().delete(*a)  # 캔버스 항목 지우기
+        return self.entry.delete(*a)
+
+
+class HeaderBar(tk.Canvas):
+    """맨 위 제목 띠: 아래쪽 모서리가 둥근 청록색 카드"""
+
+    def __init__(self, parent, title, subtitle, logo=None, height=92):
+        super().__init__(parent, height=height, highlightthickness=0, bd=0, background=BG)
+        self.title_t, self.sub_t, self.logo, self.h = title, subtitle, logo, height
+        self.bind("<Configure>", lambda e: self._draw(e.width))
+
+    def _draw(self, w):
+        self.delete("all")
+        h = self.h
+        round_rect(self, 12, 10, w - 12, h - 4, 30, fill=TEAL, outline=TEAL)
+        # 장식: 은은한 동그라미 몇 개
+        for cx, cy, r, c in ((w - 90, 40, 20, "#27a9ba"), (w - 60, 62, 9, YELLOW), (w - 130, 58, 11, "#27a9ba")):
+            self.create_oval(cx - r, cy - r, cx + r, cy + r, fill=c, outline=c)
+        x = 34
+        if self.logo is not None:
+            self.create_image(x, h / 2 + 3, image=self.logo, anchor="w")
+            x += 64 + 14
+        self.create_text(x, 37, text=self.title_t, anchor="w", fill="white", font=(FONT, 18, "bold"))
+        self.create_text(x, 64, text=self.sub_t, anchor="w", fill="#d4f1f5", font=(FONT, 9))
+
+
+class PillTabs(tk.Frame):
+    """알약 모양 탭 줄. Notebook 의 탭 대신 쓴다."""
+
+    def __init__(self, parent, nb):
+        super().__init__(parent, background=BG)
+        self.nb, self.btns = nb, []
+        for i, tab in enumerate(nb.tabs()):
+            text = nb.tab(tab, "text").strip()
+            b_ = RoundButton(self, text=text, command=lambda i=i: nb.select(i), style="Accent" if i == 0 else "", height=34, padx=22)
+            b_.pack(side="left", padx=(14 if i == 0 else 6, 0), pady=(10, 4))
+            self.btns.append(b_)
+        nb.bind("<<NotebookTabChanged>>", lambda e: self.refresh())
+
+    def refresh(self):
+        cur = self.nb.index(self.nb.select())
+        for i, b_ in enumerate(self.btns):
+            b_.accent = (i == cur)
+            b_._font.configure(weight="bold" if i == cur else "normal")
+            b_._draw()
+
+
+def asset_path(name):
+    """exe 로 묶였을 때와 그냥 실행할 때 모두 같은 방식으로 그림 파일 위치를 찾는다."""
+    return Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / name
 
 
 class QueueWriter:
@@ -103,7 +335,7 @@ class BusyIndicator:
     def stop(self):
         self.active = False
         self.pbar.stop()
-        self.pbar.config(mode="indeterminate")
+        self.pbar.config(mode="determinate")
         self.pbar["value"] = 0
 
     def _show(self):
@@ -122,7 +354,8 @@ class AliasWindow(tk.Toplevel):
     def __init__(self, app):
         super().__init__(app)
         self.title("회사명 별칭 관리")
-        self.geometry("520x420")
+        self.configure(background=BG)
+        self.geometry("600x420")
         ttk.Label(self, padding=12, wraplength=480, text=(
             "종목명의 회사명과 DART 등록 회사명이 다를 때 여기에 등록해 두시면, 앞으로 자동으로 바꿔서 검색합니다."
             " 예) 입력한 이름: 씨제이제일제당 / DART 이름: CJ제일제당")).pack(anchor="w")
@@ -132,18 +365,18 @@ class AliasWindow(tk.Toplevel):
         self.dst = tk.StringVar()
         ttk.Label(form, text="입력한 이름").grid(row=0, column=0, sticky="w")
         ttk.Label(form, text="DART 등록 이름").grid(row=0, column=1, sticky="w", padx=(10, 0))
-        e1 = ttk.Entry(form, textvariable=self.src, width=22)
+        e1 = RoundEntry(form, textvariable=self.src, width=22)
         e1.grid(row=1, column=0, sticky="w")
-        e2 = ttk.Entry(form, textvariable=self.dst, width=22)
+        e2 = RoundEntry(form, textvariable=self.dst, width=22)
         e2.grid(row=1, column=1, sticky="w", padx=(10, 0))
         e2.bind("<Return>", lambda ev: self.add())
-        ttk.Button(form, text="추가", command=self.add).grid(row=1, column=2, padx=(10, 0))
+        RoundButton(form, text="추가", command=self.add).grid(row=1, column=2, padx=(10, 0))
         e1.focus_set()
         self.msg = tk.StringVar()
         ttk.Label(self, textvariable=self.msg, padding=(12, 4)).pack(anchor="w")
         self.lb = tk.Listbox(self, height=10, activestyle="none")
         self.lb.pack(fill="both", expand=True, padx=12)
-        ttk.Button(self, text="선택한 별칭 삭제", command=self.remove).pack(anchor="e", padx=12, pady=12)
+        RoundButton(self, text="선택한 별칭 삭제", command=self.remove).pack(anchor="e", padx=12, pady=12)
         self.refresh()
 
     def refresh(self):
@@ -184,12 +417,12 @@ class App(tk.Tk):
         super().__init__()
         self.title("채권간편검색기")
         try:  # 창/작업표시줄 아이콘 (bond_icon.ico 가 같은 폴더에 있으면 사용)
-            base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))  # exe 로 묶였을 때는 임시 폴더
-            self.iconbitmap(str(base / "bond_icon.ico"))
+            self.iconbitmap(str(asset_path("bond_icon.ico")))
         except Exception:
             pass
-        self.geometry("1100x600")
-        self.minsize(940, 420)
+        self.geometry("1100x640")
+        self.minsize(940, 440)
+        apply_theme(self)
         self.key = None
         self.corps = None
         self.busy = False
@@ -203,8 +436,9 @@ class App(tk.Tk):
         self.table_text = ""
 
         # 하단 워터마크 (먼저 배치해야 창을 줄여도 가려지지 않는다)
-        ttk.Label(self, text="문의 - 나은", foreground="#9aa3a8", font=("Malgun Gothic", 8)).pack(
+        ttk.Label(self, text="문의 - 나은", foreground="#9aa3a8", font=(FONT, 8)).pack(
             side="bottom", anchor="e", padx=10, pady=(0, 3))
+        self.build_header()
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True)
         page1 = ttk.Frame(self.nb)
@@ -213,6 +447,8 @@ class App(tk.Tk):
         self.nb.add(self.ktb, text="  국고채 검색  ")
         self.bond = BondFrame(self.nb, self)
         self.nb.add(self.bond, text="  일반 채권 검색  ")
+        self.tabs = PillTabs(self, self.nb)
+        self.tabs.pack(fill="x", side="top", before=self.nb)
 
         top = ttk.Frame(page1, padding=12)
         top.pack(fill="x")
@@ -229,21 +465,22 @@ class App(tk.Tk):
         cols = (0, 2, 3, 4)  # 1번 열은 [코드검색] 버튼 자리
         for (label, var, w), col in zip(fields, cols):
             ttk.Label(top, text=label).grid(row=0, column=col, sticky="w", padx=(0, 10))
-            e = ttk.Entry(top, textvariable=var, width=w)
+            e = RoundEntry(top, textvariable=var, width=w)
             e.grid(row=1, column=col, sticky="w", padx=(0, 10))
             e.bind("<Return>", lambda ev: self.go())
             if col == 0:
                 e.focus_set()
-        self.code_btn = ttk.Button(top, text="코드검색", command=self.on_code_button)
+        self.code_btn = RoundButton(top, text="코드검색", command=self.on_code_button)
         self.code_btn.grid(row=1, column=1, padx=(0, 14))
-        self.btn = ttk.Button(top, text="인수기관 조회", command=self.step2)
+        self.btn = RoundButton(top, text="인수기관 조회", command=self.step2, style="Accent.TButton")
         self.btn.grid(row=1, column=5)
-        ttk.Button(top, text="여러 개 일괄 조회", command=lambda: BulkWindow(self)).grid(row=1, column=6, padx=(10, 0))
-        ttk.Button(top, text="별칭 관리", command=lambda: AliasWindow(self)).grid(row=0, column=6, sticky="e", padx=(10, 0))
+        RoundButton(top, text="여러 개 일괄 조회", command=lambda: BulkWindow(self)).grid(row=1, column=6, padx=(10, 0))
+        RoundButton(self.tabs, text="별칭 관리", command=lambda: AliasWindow(self), height=32, padx=16).pack(
+            side="right", padx=16, pady=(10, 4))
 
         self.status = tk.StringVar(value="종목코드를 입력하고 엔터를 누르면 회사명/회차/발행일 입력과 인수기관 조회가 한 번에 진행됩니다. ([코드검색]은 입력까지만 합니다)")
         ttk.Label(page1, textvariable=self.status, padding=(12, 0)).pack(anchor="w")
-        self.pbar = ttk.Progressbar(page1, mode="indeterminate")
+        self.pbar = ttk.Progressbar(page1, mode="determinate")
         self.pbar.pack(fill="x", padx=12, pady=(2, 0))
         self.busy_ui = BusyIndicator(self, self.pbar, self.status.set)
 
@@ -255,7 +492,7 @@ class App(tk.Tk):
         ):
             self.tree.heading(c, text=title)
             self.tree.column(c, width=w, anchor=anchor)
-        self.tree.tag_configure("total", font=("TkDefaultFont", 9, "bold"))
+        self.tree.tag_configure("total", font=(FONT, 10, "bold"), background="#fff3cf")
         self.tree.pack(fill="both", expand=True, padx=12, pady=(8, 4))
         enable_copy(self.tree, (1, 2))
         ttk.Label(page1, text=HINT, foreground="gray", wraplength=980).pack(anchor="w", padx=12)
@@ -265,10 +502,10 @@ class App(tk.Tk):
         self.link = ttk.Label(bar, text="", foreground="#0b6e7f", cursor="hand2")
         self.link.pack(side="left")
         self.link.bind("<Button-1>", lambda e: self.url and webbrowser.open(self.url))
-        self.copy_btn = ttk.Button(bar, text="표 복사 (엑셀 붙여넣기용)", command=self.copy_table, state="disabled")
+        self.copy_btn = RoundButton(bar, text="표 복사 (엑셀 붙여넣기용)", command=self.copy_table, state="disabled")
         self.copy_btn.pack(side="right")
 
-        self.log = tk.Text(page1, height=5, wrap="word", state="disabled", relief="flat", background="#f3f5f6")
+        self.log = tk.Text(page1, height=5, wrap="word", state="disabled", relief="flat", background="#e9f3f5", font=(FONT, 9), padx=8, pady=6)
         self.log.pack(fill="x", padx=12, pady=12)
         self.after(400, self.ensure_keys)
 
@@ -303,6 +540,16 @@ class App(tk.Tk):
             self.status.set("종목코드를 먼저 입력해 주세요.")
             return
         self.step1(isin)
+
+    def build_header(self):
+        """맨 위 제목 띠: 캐릭터 + 이름 + 한 줄 설명 (아래쪽이 둥근 카드)"""
+        logo = None
+        try:
+            logo = tk.PhotoImage(file=str(asset_path("bond_icon.png"))).subsample(4, 4)  # 256px -> 64px
+        except Exception:
+            pass
+        self._logo = logo
+        HeaderBar(self, "나봉검색기", "인수기관 · 국고채 · 일반 채권을 한 번에 찾아 보세요", logo).pack(fill="x", side="top")
 
     def ensure_keys(self):
         """처음 실행할 때 필요한 키(OpenDART, 공공데이터포털)를 한꺼번에 입력받는다. 저장된 키는 다시 묻지 않는다."""
@@ -513,12 +760,12 @@ class BondFrame(ttk.Frame):
         top.pack(fill="x")
         ttk.Label(top, text="종목명 / 코드").grid(row=0, column=0, sticky="w")
         self.query = tk.StringVar()
-        e = ttk.Entry(top, textvariable=self.query, width=34)
+        e = RoundEntry(top, textvariable=self.query, width=34)
         e.grid(row=1, column=0, sticky="w")
         e.bind("<Return>", lambda ev: self.start())
-        self.run_btn = ttk.Button(top, text="검색", command=self.start)
+        self.run_btn = RoundButton(top, text="검색", command=self.start, style="Accent.TButton")
         self.run_btn.grid(row=1, column=1, padx=(8, 0))
-        self.refresh_btn = ttk.Button(top, text="목록 새로고침", command=lambda: self.start(refresh=True))
+        self.refresh_btn = RoundButton(top, text="목록 새로고침", command=lambda: self.start(refresh=True))
         self.refresh_btn.grid(row=1, column=2, padx=(8, 0))
         ttk.Label(top, foreground="gray", text=(
             "예) 수산금융  /  kr1035  /  쉼표나 줄바꿈으로 여러 개를 넣으면 모두 찾습니다. "
@@ -526,7 +773,7 @@ class BondFrame(ttk.Frame):
 
         self.msg = tk.StringVar(value="종목명이나 코드의 일부를 입력하고 엔터를 눌러 주세요.")
         ttk.Label(self, textvariable=self.msg, padding=(12, 4, 12, 0)).pack(anchor="w")
-        self.pbar = ttk.Progressbar(self, mode="indeterminate")
+        self.pbar = ttk.Progressbar(self, mode="determinate")
         self.pbar.pack(fill="x", padx=12, pady=(2, 0))
         self.busy_ui = BusyIndicator(self, self.pbar, self.msg.set)
         self.info = tk.StringVar()
@@ -534,11 +781,11 @@ class BondFrame(ttk.Frame):
 
         bar = ttk.Frame(self, padding=(12, 6))
         bar.pack(fill="x")
-        self.copy_btn = ttk.Button(bar, text="표 복사", command=self.copy_all, state="disabled")
+        self.copy_btn = RoundButton(bar, text="표 복사", command=self.copy_all, state="disabled")
         self.copy_btn.pack(side="left")
-        self.code_btn = ttk.Button(bar, text="종목코드만 복사", command=self.copy_codes, state="disabled")
+        self.code_btn = RoundButton(bar, text="종목코드만 복사", command=self.copy_codes, state="disabled")
         self.code_btn.pack(side="left", padx=6)
-        self.raw_btn = ttk.Button(bar, text="원본 필드 보기", command=self.show_raw, state="disabled")
+        self.raw_btn = RoundButton(bar, text="원본 필드 보기", command=self.show_raw, state="disabled")
         self.raw_btn.pack(side="right")
 
         ttk.Label(self, foreground="gray", wraplength=960, text=(
@@ -652,8 +899,9 @@ class BondFrame(ttk.Frame):
         self.items = items
         self.rows = [b.map_bond(it) for it in items]
         self.tree.delete(*self.tree.get_children())
-        for r in self.rows:
-            self.tree.insert("", "end", values=[r[c] for c in self.cols])
+        self.tree.tag_configure("odd", background="#f1f8fa")
+        for n, r in enumerate(self.rows):
+            self.tree.insert("", "end", values=[r[c] for c in self.cols], tags=("odd",) if n % 2 else ())
         text = prefix + f"{len(self.rows):,}건 찾았습니다."
         if truncated:
             text += " (너무 많아 앞의 일부만 표시했습니다. 검색어를 더 구체적으로 입력해 주세요.)"
@@ -745,19 +993,19 @@ class KtbFrame(ttk.Frame):
 
         bar = ttk.Frame(self, padding=(12, 8))
         bar.pack(fill="x")
-        self.run_btn = ttk.Button(bar, text="국고채 검색", command=self.start)
+        self.run_btn = RoundButton(bar, text="국고채 검색", command=self.start, style="Accent.TButton")
         self.run_btn.pack(side="left")
         self.infl = tk.BooleanVar(value=False)
         self.strip = tk.BooleanVar(value=False)
         ttk.Checkbutton(bar, text="물가채 포함", variable=self.infl).pack(side="left", padx=(14, 4))
         ttk.Checkbutton(bar, text="원금분리채 포함", variable=self.strip).pack(side="left", padx=4)
-        self.copy_btn = ttk.Button(bar, text="표 복사", command=self.copy_all, state="disabled")
+        self.copy_btn = RoundButton(bar, text="표 복사", command=self.copy_all, state="disabled")
         self.copy_btn.pack(side="right")
-        self.code_btn = ttk.Button(bar, text="종목코드만 복사", command=self.copy_codes, state="disabled")
+        self.code_btn = RoundButton(bar, text="종목코드만 복사", command=self.copy_codes, state="disabled")
         self.code_btn.pack(side="right", padx=6)
         self.msg = tk.StringVar(value="회차를 붙여넣고 [국고채 검색]을 눌러 주세요.")
         ttk.Label(self, textvariable=self.msg, padding=(12, 0)).pack(anchor="w")
-        self.pbar = ttk.Progressbar(self, mode="indeterminate")
+        self.pbar = ttk.Progressbar(self, mode="determinate")
         self.pbar.pack(fill="x", padx=12, pady=(2, 0))
         self.busy_ui = BusyIndicator(self, self.pbar, self.msg.set)
 
@@ -768,7 +1016,7 @@ class KtbFrame(ttk.Frame):
         frame.pack(fill="both", expand=True, padx=12, pady=8)
         self.out = tk.Text(frame, wrap="none", height=10, tabs=self.TABS, cursor="xterm",
                            relief="solid", borderwidth=1, state="disabled", exportselection=False)
-        self.out.tag_configure("head", font=("TkDefaultFont", 9, "bold"), background="#e9eef0")
+        self.out.tag_configure("head", font=(FONT, 10, "bold"), background="#dcebee")
         vsb = ttk.Scrollbar(frame, orient="vertical", command=self.out.yview)
         self.out.configure(yscrollcommand=vsb.set)
         self.out.pack(side="left", fill="both", expand=True)
@@ -869,6 +1117,7 @@ class BulkWindow(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("일괄 조회")
+        self.configure(background=BG)
         self.geometry("1020x620")
         self.minsize(820, 420)
         self.q = queue.Queue()
@@ -885,9 +1134,9 @@ class BulkWindow(tk.Toplevel):
 
         bar = ttk.Frame(self, padding=12)
         bar.pack(fill="x")
-        self.run_btn = ttk.Button(bar, text="일괄 조회", command=self.start)
+        self.run_btn = RoundButton(bar, text="일괄 조회", command=self.start, style="Accent.TButton")
         self.run_btn.pack(side="left")
-        self.copy_btn = ttk.Button(bar, text="표 복사 (엑셀 붙여넣기용)", command=self.copy, state="disabled")
+        self.copy_btn = RoundButton(bar, text="표 복사 (엑셀 붙여넣기용)", command=self.copy, state="disabled")
         self.copy_btn.pack(side="left", padx=8)
         self.progress = tk.StringVar(value=f"동시에 {self.MAX_WORKERS}개씩 조회합니다.")
         ttk.Label(bar, textvariable=self.progress).pack(side="left", padx=8)
@@ -904,7 +1153,7 @@ class BulkWindow(tk.Toplevel):
         ):
             self.tree.heading(c, text=title)
             self.tree.column(c, width=w, anchor=anchor)
-        self.tree.tag_configure("total", font=("TkDefaultFont", 9, "bold"))
+        self.tree.tag_configure("total", font=(FONT, 10, "bold"), background="#fff3cf")
         self.tree.tag_configure("fail", foreground="#b3261e")
         vsb = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
